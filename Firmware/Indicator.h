@@ -47,9 +47,9 @@ public:
     switch (BlynkState::get()) {
     case MODE_WAIT_CONFIG:       return beatLED(COLOR_BLUE,    (int[]){ 50, 500 });
     case MODE_CONFIGURING:       return beatLED(COLOR_BLUE,    (int[]){ 200, 200 });
-    case MODE_CONNECTING_NET:    return beatLED(COLOR_BLYNK,   (int[]){ 50, 500 });
-    case MODE_CONNECTING_CLOUD:  return beatLED(COLOR_BLYNK,   (int[]){ 100, 100 });
-    case MODE_RUNNING:           return waveLED(COLOR_BLYNK,   5000);
+    case MODE_CONNECTING_NET:    return beatLED(COLOR_BLACK,   (int[]){ 50, 500 });
+    case MODE_CONNECTING_CLOUD:  return beatLED(COLOR_BLACK,   (int[]){ 100, 100 });
+    case MODE_RUNNING:           return waveLED(COLOR_BLACK,   5000);
     case MODE_OTA_UPGRADE:       return beatLED(COLOR_MAGENTA, (int[]){ 50, 50 });
     default:                     return beatLED(COLOR_RED,     (int[]){ 80, 100, 80, 1000 } );
     }

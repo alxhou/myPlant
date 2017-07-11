@@ -2,7 +2,7 @@
  * General options
  */
 
-#define BOARD_FIRMWARE_VERSION        "1.0.1"
+#define BOARD_FIRMWARE_VERSION        "1.0.0"
 #define BOARD_HARDWARE_VERSION        "1.0.0"
 
 #define BOARD_NAME                    "My Plant"           // Name of your product. Should match App Export request info.
@@ -21,12 +21,12 @@
   #define BOARD_BUTTON_PIN            0                     // Pin where user button is attached
   #define BOARD_BUTTON_ACTIVE_LOW     true                  // true if button is "active-low"
 
-  #define BOARD_LED_PIN               2                     // Set LED pin - if you have a single-color LED attached
+  //#define BOARD_LED_PIN               2                     // Set LED pin - if you have a single-color LED attached
   //#define BOARD_LED_PIN_R           15                    // Set R,G,B pins - if your LED is PWM RGB 
   //#define BOARD_LED_PIN_G           12
   //#define BOARD_LED_PIN_B           13
-  //#define BOARD_LED_PIN_WS2812      4                     // Set if your LED is WS2812 RGB
-  #define BOARD_LED_INVERSE           false                 // true, if you need to inverse LED signal
+  #define BOARD_LED_PIN_WS2812      2                     // Set if your LED is WS2812 RGB
+  //#define BOARD_LED_INVERSE           false                 // true, if you need to inverse LED signal
   #define BOARD_RGB_BRIGHTNESS        32                    // 0..255 brightness control
 
 #elif defined(USE_NODE_MCU_BOARD)
