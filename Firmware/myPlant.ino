@@ -27,10 +27,18 @@
 #include "BlynkProvisioning.h"
 #include "Adafruit_Si7021.h"
 
-// Time to sleep (in seconds):
-const int sleepTimeS = 10;
+static int power = 14;
+
+static int sleepTimeS = 10;
+static int wateringThreshold = 20;
+
+static bool isNotificationSent = false;
+static bool isRefreshRateReceived = false;
+static bool isWateringThresholdReceived = false;
 
 Adafruit_Si7021 sensor = Adafruit_Si7021();
+
+WidgetMap myMap(V0);
 
 void setup() {
   Serial.begin(115200);
@@ -61,6 +69,9 @@ void setup() {
    **************************************************************/
 
   BlynkProvisioning.begin();
+
+  // If you want to remove all points:
+  //myMap.clear();
 }
 
 void loop() {
@@ -68,13 +79,28 @@ void loop() {
   BlynkProvisioning.run();
 
   // Send sensors value to cloud when ready
-  if (BlynkState::is(MODE_RUNNING)) {
+  if (isRefreshRateReceived && isWateringThresholdReceived && BlynkState::is(MODE_RUNNING)) {
     send_sensor_value();
 
-    // Sleep
-    DEBUG_PRINT("Device in sleep mode");
-    ESP.deepSleep(sleepTimeS * 1000000);
-  } 
+    int index = 1;
+    float lat = 45.791011;
+    float lon = -73.393825;
+    myMap.location(index, lat, lon, "Plant 1 : OK");
+
+    if (isNotificationSent) {
+      BlynkState::set(MODE_THIRSTY);
+      WiFi.forceSleepBegin();
+    } 
+    else {
+      digitalWrite(power, LOW);
+      DEBUG_PRINT("Device in sleep mode");
+      ESP.deepSleep(sleepTimeS * 1000000);
+    } 
+  }
+
+  if (BlynkState::is(MODE_THIRSTY)) {
+    check_soil_moisture();
+  }
 }
 
 
@@ -82,11 +108,10 @@ void loop() {
  *
  *              myPlant App code
  *
- * The following code simulates plant watering system
+ * The following code manage plant monitoring system
  *
  **************************************************************/
 
-static int power = 14;
 static int s1 = 12;
 static int s2 = 13;
 static int clk = 15;
@@ -94,9 +119,35 @@ static int clk = 15;
 static int sensorLight = 0;
 static int sensorBattery = 0;
 static int sensorSoilMoisture = 0;
-static int sensorAirHumidity = 0;
-static int sensorAirTemperature = 0;
-static bool isNotificationSent = false;
+static float sensorAirHumidity = 0.0;
+static float sensorAirTemperature = 0.0;
+
+// Calibration factors
+const int soilMoistureOffset = -191;
+const float soilMoistureMultiplier = 1.15;
+
+// Getting data from "Refresh Rate" step setting
+BLYNK_WRITE(V10) {
+  sleepTimeS = param.asInt() * 60;
+  if (sleepTimeS == 0) {
+    sleepTimeS = 10;
+  } 
+  DEBUG_PRINT(String("Refresh rate: ") + sleepTimeS);
+  isRefreshRateReceived = true;
+}
+
+// Getting data from "Watering threshold" step setting
+BLYNK_WRITE(V11) {
+  wateringThreshold = param.asInt();
+  DEBUG_PRINT(String("Watering threshold: ") + wateringThreshold);
+  isWateringThresholdReceived = true;
+}
+
+// When device starts ->
+//   sync refresh rate and watering threshold
+BLYNK_CONNECTED() {
+  Blynk.syncVirtual(V10, V11);
+}
 
 
 void sensor_init() {
@@ -122,21 +173,23 @@ void sensor_read() {
   // Soil Moisture
   digitalWrite(s1, HIGH);
   digitalWrite(s2, LOW);
-  delay(1);
+  delay(10);
   sensorSoilMoisture = 1023 - analogRead(A0);
+  DEBUG_PRINT("Soil Moisture RAW: " + String(sensorSoilMoisture));
+  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureMultiplier;
   DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
    
   // Light level
   digitalWrite(s1, LOW);
   digitalWrite(s2, HIGH);
-  delay(1);
+  delay(10);
   sensorLight = analogRead(A0);
   DEBUG_PRINT("Light level: " + String(sensorLight));
 
   // Battery level
   digitalWrite(s1, HIGH);
   digitalWrite(s2, HIGH);
-  delay(1);
+  delay(10);
   sensorBattery = analogRead(A0);
   DEBUG_PRINT("Battery level: " + String(sensorBattery));
 
@@ -148,10 +201,16 @@ void sensor_read() {
   sensorAirTemperature = sensor.readTemperature();
   DEBUG_PRINT("Air temperature: " + String(sensorAirTemperature));
 
+  // Disable i2c interface
+  pinMode(4, INPUT);
+  pinMode(5, INPUT);
+
+  // Init rgb led
+  indicator.initLED();
+
   // Power off sensors
   digitalWrite(s1, LOW);
   digitalWrite(s2, LOW);
-  digitalWrite(power, LOW);
 }
 
 
@@ -160,10 +219,63 @@ void send_sensor_value() {
 
   Blynk.virtualWrite(V3, sensorAirTemperature);
   Blynk.virtualWrite(V4, sensorAirHumidity);
-  
+
+  // Soil moisture
+  if (sensorSoilMoisture < 30) {
+    Blynk.virtualWrite(V1, "DRY");
+  } else if (sensorSoilMoisture > 80) {
+    Blynk.virtualWrite(V1, "WET");
+    isNotificationSent = false;
+  } else {
+    Blynk.virtualWrite(V1, "MOIST");
+  }
   Blynk.virtualWrite(V7, sensorSoilMoisture);
+
+  // Light level
+  if (sensorLight < 100) {
+    Blynk.virtualWrite(V2, "LOW");
+  } else if (sensorLight > 800) {
+    Blynk.virtualWrite(V2, "HIGH");
+  } else {
+    Blynk.virtualWrite(V2, "MED");
+  }
   Blynk.virtualWrite(V8, sensorLight);
+  
   Blynk.virtualWrite(V9, sensorBattery);
+
+  // Manage notifications
+  if (sensorSoilMoisture < wateringThreshold) {
+    if (isNotificationSent == false) {
+      Blynk.notify("Your plant is thirsty!");
+      isNotificationSent = true;
+      DEBUG_PRINT("Notification sent");
+    }
+  }
 }
 
+
+void check_soil_moisture() {
+  DEBUG_PRINT("Check soil moisture");
+  
+  // Soil Moisture
+  digitalWrite(s1, HIGH);
+  digitalWrite(s2, LOW);
+  delay(10);
+  sensorSoilMoisture = 1023 - analogRead(A0);
+  DEBUG_PRINT("Soil Moisture RAW: " + String(sensorSoilMoisture));
+  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureMultiplier;
+  DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
+   
+  // Power off sensors
+  digitalWrite(s1, LOW);
+  digitalWrite(s2, LOW);
+
+  if (sensorSoilMoisture > wateringThreshold) {
+    digitalWrite(power, LOW);
+    DEBUG_PRINT("Device in sleep mode");
+    ESP.deepSleep(10 * 1000000);
+  }
+
+  delay(5000);
+}
 

@@ -36,7 +36,7 @@ public:
 
   Indicator() {
     m_Counter = 0;
-    initLED();
+    //initLED();
   }
 
   uint32_t run() {
@@ -45,11 +45,12 @@ public:
       if (millis() - g_buttonPressTime > BUTTON_HOLD_TIME_INDICATION) { return waveLED(COLOR_WHITE,   1000); }
     }
     switch (BlynkState::get()) {
-    case MODE_WAIT_CONFIG:       return beatLED(COLOR_BLUE,    (int[]){ 50, 500 });
-    case MODE_CONFIGURING:       return beatLED(COLOR_BLUE,    (int[]){ 200, 200 });
+    case MODE_WAIT_CONFIG:       return beatLED(COLOR_BLYNK,    (int[]){ 50, 500 });
+    case MODE_CONFIGURING:       return beatLED(COLOR_BLYNK,    (int[]){ 200, 200 });
     case MODE_CONNECTING_NET:    return beatLED(COLOR_BLACK,   (int[]){ 50, 500 });
     case MODE_CONNECTING_CLOUD:  return beatLED(COLOR_BLACK,   (int[]){ 100, 100 });
     case MODE_RUNNING:           return waveLED(COLOR_BLACK,   5000);
+    case MODE_THIRSTY:           return beatLED(COLOR_BLUE,     (int[]){ 80, 100, 80, 1000 } );
     case MODE_OTA_UPGRADE:       return beatLED(COLOR_MAGENTA, (int[]){ 50, 50 });
     default:                     return beatLED(COLOR_RED,     (int[]){ 80, 100, 80, 1000 } );
     }
@@ -59,8 +60,7 @@ public:
     m_Counter = 0;
     indicator_run();
   }
-
-protected:
+  
 
 #if defined(BOARD_LED_PIN_WS2812) || defined(BOARD_LED_PIN_R)
 
@@ -100,6 +100,8 @@ protected:
   }
 
 #endif
+
+protected:
 
   template<typename T>
   uint32_t beatLED(uint32_t onColor, const T& beat) {

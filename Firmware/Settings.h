@@ -25,7 +25,7 @@
   //#define BOARD_LED_PIN_R           15                    // Set R,G,B pins - if your LED is PWM RGB 
   //#define BOARD_LED_PIN_G           12
   //#define BOARD_LED_PIN_B           13
-  #define BOARD_LED_PIN_WS2812      2                     // Set if your LED is WS2812 RGB
+  #define BOARD_LED_PIN_WS2812      4                     // Set if your LED is WS2812 RGB
   //#define BOARD_LED_INVERSE           false                 // true, if you need to inverse LED signal
   #define BOARD_RGB_BRIGHTNESS        32                    // 0..255 brightness control
 
