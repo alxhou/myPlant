@@ -14,12 +14,6 @@
 
  *************************************************************/
 
-//#define USE_SPARKFUN_BLYNK_BOARD    // Uncomment the board you are using
-//#define USE_NODE_MCU_BOARD        // Comment out the boards you are not using
-//#define USE_WITTY_CLOUD_BOARD
-#define USE_CUSTOM_BOARD          // For all other ESP8266-based boards -
-                                    // see "Custom board configuration" in Settings.h
-
 #define APP_DEBUG        // Comment this out to disable debug prints
 
 #define BLYNK_PRINT Serial
@@ -27,18 +21,32 @@
 #include "BlynkProvisioning.h"
 #include "Adafruit_Si7021.h"
 
-static int power = 14;
+// Alert maeesages
+#define URGENT_WATER ": URGENT! Water me! :O "
+#define WATER ": Water me please. :( "
+#define THANK_YOU ": Thank you for watering me! :) "
+#define OVER_WATERED ": You over watered me. "
+#define UNDER_WATERED ": You didn't water me enough. "
 
+//tracks the state to avoid erroneously repeated tweets
+#define URGENT_SENT 3
+#define WATER_SENT 2
+#define MOISTURE_OK 1
+
+#define HYSTERESIS 25 // stabilization value http://en.wikipedia.org/wiki/Hysteresis
+
+static int state = MOISTURE_OK; // tracks which messages have been sent
+static int counter = 0;
+static int power = 14;
 static int sleepTimeS = 10;
 static int wateringThreshold = 20;
+static int isParametersReceived = 0;
 
-static bool isNotificationSent = false;
-static bool isRefreshRateReceived = false;
-static bool isWateringThresholdReceived = false;
+static bool isNotificationSent = true;
+
 
 Adafruit_Si7021 sensor = Adafruit_Si7021();
 
-WidgetMap myMap(V0);
 
 void setup() {
   Serial.begin(115200);
@@ -69,9 +77,6 @@ void setup() {
    **************************************************************/
 
   BlynkProvisioning.begin();
-
-  // If you want to remove all points:
-  //myMap.clear();
 }
 
 void loop() {
@@ -79,18 +84,14 @@ void loop() {
   BlynkProvisioning.run();
 
   // Send sensors value to cloud when ready
-  if (isRefreshRateReceived && isWateringThresholdReceived && BlynkState::is(MODE_RUNNING)) {
+  if ((isParametersReceived == 5) && BlynkState::is(MODE_RUNNING)) {
     send_sensor_value();
+    send_alert();
+    send_map_value();
 
-    int index = 1;
-    float lat = 45.791011;
-    float lon = -73.393825;
-    myMap.location(index, lat, lon, "Plant 1 : OK");
-
-    if (isNotificationSent) {
+    if (state > MOISTURE_OK) {
       BlynkState::set(MODE_THIRSTY);
-      WiFi.forceSleepBegin();
-    } 
+    }
     else {
       digitalWrite(power, LOW);
       DEBUG_PRINT("Device in sleep mode");
@@ -99,7 +100,20 @@ void loop() {
   }
 
   if (BlynkState::is(MODE_THIRSTY)) {
-    check_soil_moisture();
+    delay(10000);
+    sensor_init();
+    sensor_read();
+    send_sensor_value();
+    send_alert();
+    send_map_value(); 
+
+    if (state == MOISTURE_OK) {
+      BlynkState::set(MODE_WATER);
+      delay(5000);
+      digitalWrite(power, LOW);
+      DEBUG_PRINT("Device in sleep mode");
+      ESP.deepSleep(sleepTimeS * 1000000);
+    }
   }
 }
 
@@ -122,9 +136,32 @@ static int sensorSoilMoisture = 0;
 static float sensorAirHumidity = 0.0;
 static float sensorAirTemperature = 0.0;
 
+WidgetMap myMap(V0);
+int mapIndex = 1;
+
+String alertMessage = "OK";
+
 // Calibration factors
-const int soilMoistureOffset = -191;
-const float soilMoistureMultiplier = 1.15;
+static int soilMoistureOffset = 0;
+static float soilMoistureGain = 1.0;
+const int lightOffset = -46;
+const float lightGain = 0.104;
+const int batteryOffset = -630;
+const float batteryGain = 0.4;
+
+// Getting data from "soil offset" step setting
+BLYNK_WRITE(V5) {
+  soilMoistureOffset = param.asInt() * -1;
+  DEBUG_PRINT(String("Soil moisture offset: ") + soilMoistureOffset);
+  isParametersReceived += 1;
+}
+
+// Getting data from "soil gain" step setting
+BLYNK_WRITE(V6) {
+  soilMoistureGain = param.asInt() / 100.0;
+  DEBUG_PRINT(String("Soil moisture Gain: ") + soilMoistureGain);
+  isParametersReceived += 1;
+}
 
 // Getting data from "Refresh Rate" step setting
 BLYNK_WRITE(V10) {
@@ -133,20 +170,27 @@ BLYNK_WRITE(V10) {
     sleepTimeS = 10;
   } 
   DEBUG_PRINT(String("Refresh rate: ") + sleepTimeS);
-  isRefreshRateReceived = true;
+  isParametersReceived += 1;
 }
 
 // Getting data from "Watering threshold" step setting
 BLYNK_WRITE(V11) {
   wateringThreshold = param.asInt();
   DEBUG_PRINT(String("Watering threshold: ") + wateringThreshold);
-  isWateringThresholdReceived = true;
+  isParametersReceived += 1;
+}
+
+// Getting data from "map index" step setting
+BLYNK_WRITE(V12) {
+  mapIndex = param.asInt();
+  DEBUG_PRINT(String("Map index: ") + mapIndex);
+  isParametersReceived += 1;
 }
 
 // When device starts ->
-//   sync refresh rate and watering threshold
+//   sync app parameters
 BLYNK_CONNECTED() {
-  Blynk.syncVirtual(V10, V11);
+  Blynk.syncVirtual(V5, V6, V10, V11, V12);
 }
 
 
@@ -161,7 +205,7 @@ void sensor_init() {
   analogWriteFreq(40000);
   analogWrite(clk, 100);
 
-  delay(500);
+  delay(200);
 
   sensor.begin();
 }
@@ -173,24 +217,28 @@ void sensor_read() {
   // Soil Moisture
   digitalWrite(s1, HIGH);
   digitalWrite(s2, LOW);
-  delay(10);
+  delay(100);
   sensorSoilMoisture = 1023 - analogRead(A0);
   DEBUG_PRINT("Soil Moisture RAW: " + String(sensorSoilMoisture));
-  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureMultiplier;
-  DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
+  //sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureGain;
+  //DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
    
   // Light level
   digitalWrite(s1, LOW);
   digitalWrite(s2, HIGH);
-  delay(10);
+  delay(100);
   sensorLight = analogRead(A0);
-  DEBUG_PRINT("Light level: " + String(sensorLight));
+  DEBUG_PRINT("Light level RAW: " + String(sensorLight));
+  sensorLight = (sensorLight + lightOffset)*lightGain;
+  DEBUG_PRINT("Light level: " + String(sensorSoilMoisture));
 
   // Battery level
   digitalWrite(s1, HIGH);
   digitalWrite(s2, HIGH);
-  delay(10);
+  delay(100);
   sensorBattery = analogRead(A0);
+  DEBUG_PRINT("Battery level RAW: " + String(sensorBattery));
+  sensorBattery = (sensorBattery + batteryOffset)*batteryGain;
   DEBUG_PRINT("Battery level: " + String(sensorBattery));
 
   // Air humidity
@@ -201,14 +249,10 @@ void sensor_read() {
   sensorAirTemperature = sensor.readTemperature();
   DEBUG_PRINT("Air temperature: " + String(sensorAirTemperature));
 
-  // Disable i2c interface
-  pinMode(4, INPUT);
-  pinMode(5, INPUT);
-
   // Init rgb led
   indicator.initLED();
 
-  // Power off sensors
+  // Unselect sensors
   digitalWrite(s1, LOW);
   digitalWrite(s2, LOW);
 }
@@ -221,61 +265,100 @@ void send_sensor_value() {
   Blynk.virtualWrite(V4, sensorAirHumidity);
 
   // Soil moisture
+  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureGain;
   if (sensorSoilMoisture < 30) {
     Blynk.virtualWrite(V1, "DRY");
   } else if (sensorSoilMoisture > 80) {
     Blynk.virtualWrite(V1, "WET");
-    isNotificationSent = false;
   } else {
     Blynk.virtualWrite(V1, "MOIST");
   }
   Blynk.virtualWrite(V7, sensorSoilMoisture);
 
   // Light level
-  if (sensorLight < 100) {
+  if (sensorLight < 10) {
     Blynk.virtualWrite(V2, "LOW");
-  } else if (sensorLight > 800) {
+  } else if (sensorLight > 80) {
     Blynk.virtualWrite(V2, "HIGH");
   } else {
     Blynk.virtualWrite(V2, "MED");
   }
   Blynk.virtualWrite(V8, sensorLight);
-  
-  Blynk.virtualWrite(V9, sensorBattery);
 
-  // Manage notifications
-  if (sensorSoilMoisture < wateringThreshold) {
-    if (isNotificationSent == false) {
-      Blynk.notify("Your plant is thirsty!");
-      isNotificationSent = true;
-      DEBUG_PRINT("Notification sent");
+  if (sensorBattery > 100) {
+    sensorBattery = 100;
+  }
+  Blynk.virtualWrite(V9, sensorBattery); 
+}
+
+
+void send_map_value() {
+  String latVal = getValue(configStore.plantCoordinate, ',', 0);
+  String lonVal = getValue(configStore.plantCoordinate, ',', 1);
+  float lat = latVal.toFloat();
+  float lon = lonVal.toFloat();
+  myMap.location(mapIndex, lat, lon, String(configStore.plantName) + ": " + alertMessage); 
+}
+
+
+void send_alert() {
+  state = configStore.state;
+  counter = configStore.counter;
+  DEBUG_PRINT("State: " + String(state) + " & Counter: " + String(counter));
+  
+  if ((sensorSoilMoisture  < (wateringThreshold - 10)) && (state < URGENT_SENT)) {
+    DEBUG_PRINT("URGENT tweet");
+    alertMessage = URGENT_WATER;
+    state = URGENT_SENT; // remember this message
+    isNotificationSent = false;
+  }
+  else if  ((sensorSoilMoisture < wateringThreshold) && (state < WATER_SENT)) {
+    DEBUG_PRINT("WATER tweet");
+    alertMessage = WATER;
+    state = WATER_SENT; // remember this message
+    isNotificationSent = false;
+  }
+  else if ((sensorSoilMoisture > (wateringThreshold + HYSTERESIS)) && (state > MOISTURE_OK)) {
+    DEBUG_PRINT("OK tweet");
+    alertMessage = THANK_YOU;
+    state = MOISTURE_OK; // reset to messages not yet sent state
+    isNotificationSent = false;
+  }
+
+  if (isNotificationSent == false) {
+    Blynk.tweet(String(configStore.plantName) + String(alertMessage) + " [ID-" + String(counter) + "] ");
+    Blynk.notify(String(configStore.plantName) + String(alertMessage));
+    isNotificationSent = true;
+    DEBUG_PRINT("Notification sent");
+    counter += 1;
+    configStore.state = state;
+    configStore.counter = counter;
+    config_save();
+  }
+
+  if ((sensorSoilMoisture  < (wateringThreshold - 10)) && (state < URGENT_SENT)) {
+    DEBUG_PRINT("URGENT tweet");
+    alertMessage = URGENT_WATER;
+    state = URGENT_SENT; // remember this message
+    isNotificationSent = false;
+  }
+}
+
+
+String getValue(String data, char separator, int index)
+{
+    int found = 0;
+    int strIndex[] = { 0, -1 };
+    int maxIndex = data.length() - 1;
+
+    for (int i = 0; i <= maxIndex && found <= index; i++) {
+        if (data.charAt(i) == separator || i == maxIndex) {
+            found++;
+            strIndex[0] = strIndex[1] + 1;
+            strIndex[1] = (i == maxIndex) ? i+1 : i;
+        }
     }
-  }
+    return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
-
-void check_soil_moisture() {
-  DEBUG_PRINT("Check soil moisture");
-  
-  // Soil Moisture
-  digitalWrite(s1, HIGH);
-  digitalWrite(s2, LOW);
-  delay(10);
-  sensorSoilMoisture = 1023 - analogRead(A0);
-  DEBUG_PRINT("Soil Moisture RAW: " + String(sensorSoilMoisture));
-  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureMultiplier;
-  DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
-   
-  // Power off sensors
-  digitalWrite(s1, LOW);
-  digitalWrite(s2, LOW);
-
-  if (sensorSoilMoisture > wateringThreshold) {
-    digitalWrite(power, LOW);
-    DEBUG_PRINT("Device in sleep mode");
-    ESP.deepSleep(10 * 1000000);
-  }
-
-  delay(5000);
-}
 

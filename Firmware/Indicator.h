@@ -27,10 +27,11 @@ public:
 
   enum Colors {
     COLOR_BLACK   = RGB(0x00, 0x00, 0x00),
-    COLOR_WHITE   = RGB(0xFF, 0xFF, 0xE7),
-    COLOR_BLUE    = RGB(0x0D, 0x36, 0xFF),
+    COLOR_WHITE   = RGB(0xFF, 0xFF, 0xFF),
+    COLOR_RED     = RGB(0xFF, 0x00, 0x00),
+    COLOR_GREEN   = RGB(0x00, 0xFF, 0x00),
+    COLOR_BLUE    = RGB(0x00, 0x00, 0xFF),
     COLOR_BLYNK   = RGB(0x2E, 0xFF, 0xB9),
-    COLOR_RED     = RGB(0xFF, 0x10, 0x08),
     COLOR_MAGENTA = RGB(0xA7, 0x00, 0xFF),
   };
 
@@ -50,6 +51,7 @@ public:
     case MODE_CONNECTING_NET:    return beatLED(COLOR_BLACK,   (int[]){ 50, 500 });
     case MODE_CONNECTING_CLOUD:  return beatLED(COLOR_BLACK,   (int[]){ 100, 100 });
     case MODE_RUNNING:           return waveLED(COLOR_BLACK,   5000);
+    case MODE_WATER:             return waveLED(COLOR_GREEN,   5000);
     case MODE_THIRSTY:           return beatLED(COLOR_BLUE,     (int[]){ 80, 100, 80, 1000 } );
     case MODE_OTA_UPGRADE:       return beatLED(COLOR_MAGENTA, (int[]){ 50, 50 });
     default:                     return beatLED(COLOR_RED,     (int[]){ 80, 100, 80, 1000 } );

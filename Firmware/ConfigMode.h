@@ -24,8 +24,8 @@ const char* config_form = R"html(
   <label>WiFi SSID: </label><input type="text" name="ssid" length=32 required="required"><br/>
   <label>Password:  </label><input type="text" name="pass" length=32><br/>
   <label>Auth token:</label><input type="text" name="blynk" placeholder="a0b1c2d..." pattern="[a-zA-Z0-9]{32}" maxlength="32" required="required"><br/>
-  <label>Host: </label><input type="text" name="host" length=32><br/>
-  <label>Port: </label><input type="number" name="port" value="8442" min="1" max="65535"><br/>
+  <label>Plant name: </label><input type="text" name="name" length=32><br/>
+  <label>Coordinate: </label><input type="text" name="coordinate" length=32><br/>
   <input type='submit' value="Apply">
 </form>
 </html>
@@ -79,7 +79,10 @@ void enterConfigMode()
     }
     String token = server.arg("blynk");
     String host  = server.arg("host");
+    
     String port  = server.arg("port");
+    String name  = server.arg("name");
+    String coordinate  = server.arg("coordinate");
 
     String content;
     unsigned statusCode;
@@ -98,6 +101,9 @@ void enterConfigMode()
       if (port.length()) {
         configStore.cloudPort = port.toInt();
       }
+
+      CopyString(name, configStore.plantName);
+      CopyString(coordinate, configStore.plantCoordinate);
 
       content = R"json({"status":"ok","msg":"Configuration saved"})json";
       statusCode = 200;

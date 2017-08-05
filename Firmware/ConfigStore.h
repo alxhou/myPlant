@@ -22,6 +22,12 @@ struct ConfigStore {
   char      cloudHost[34];
   uint16_t  cloudPort;
 
+  char      plantName[34];
+  char      plantCoordinate[34];
+
+  uint16_t  state;
+  uint16_t  counter;
+
   uint16_t  checksum;
 } __attribute__((packed));
 
@@ -37,7 +43,11 @@ const ConfigStore configDefault = {
   
   "invalid token",
   "blynk-cloud.com", 8442,
-  0
+  "plant",
+  "0,0",
+  1,
+  0,
+  0 
 };
 
 #include <EEPROM.h>
