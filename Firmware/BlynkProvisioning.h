@@ -53,7 +53,8 @@ public:
     case MODE_CONFIGURING:       enterConfigMode();    break;
     case MODE_CONNECTING_NET:    enterConnectNet();    break;
     case MODE_CONNECTING_CLOUD:  enterConnectCloud();  break;
-    case MODE_RUNNING:  
+    case MODE_RUNNING: 
+    case MODE_BATTERY:
     case MODE_WATER:                  
     case MODE_THIRSTY:           Blynk.run();          break;
     case MODE_OTA_UPGRADE:       enterOTA();           break;

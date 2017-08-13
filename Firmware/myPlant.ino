@@ -1,16 +1,11 @@
 /*************************************************************
-  This is a DEMO sketch which works with Blynk myPlant app and
-  showcases how your app made with Blynk can work
+  myPlant allows plants to ask for human help:
+  https://github.com/alxhou/myPlant
 
-  You can download free app here:
+  program by Alexandre Houde with additional code from various public examples.
 
-  iOS:     TODO
-  Android: http://play.google.com/store/apps/details?id=cc.blynk.appexport.demo
-
-  If you would like to add these features to your product,
-  please contact Blynk for Businesses:
-
-                   http://www.blynk.io/
+  Based on Blynk Demo App:
+  http://www.blynk.io/demo/
 
  *************************************************************/
 
@@ -21,19 +16,29 @@
 #include "BlynkProvisioning.h"
 #include "Adafruit_Si7021.h"
 
-// Alert maeesages
+// Alert messages
 #define URGENT_WATER ": URGENT! Water me! :O "
 #define WATER ": Water me please. :( "
 #define THANK_YOU ": Thank you for watering me! :) "
 #define OVER_WATERED ": You over watered me. "
 #define UNDER_WATERED ": You didn't water me enough. "
+#define OK ": I'm fine. "
+#define BATTERY ": Change my battery please. "
+#define THANK_BATT ": Thank you for the new battery! :) "
 
 //tracks the state to avoid erroneously repeated tweets
+#define BATTERY_LOW 4
 #define URGENT_SENT 3
 #define WATER_SENT 2
 #define MOISTURE_OK 1
 
 #define HYSTERESIS 25 // stabilization value http://en.wikipedia.org/wiki/Hysteresis
+
+#define BLYNK_GREEN     "#23C48E"
+#define BLYNK_BLUE      "#04C0F8"
+#define BLYNK_YELLOW    "#ED9D00"
+#define BLYNK_RED       "#D3435C"
+#define BLYNK_DARK_BLUE "#5F7CD8"
 
 static int state = MOISTURE_OK; // tracks which messages have been sent
 static int counter = 0;
@@ -43,6 +48,7 @@ static int wateringThreshold = 20;
 static int isParametersReceived = 0;
 
 static bool isNotificationSent = true;
+static bool isDataSent = false;
 
 
 Adafruit_Si7021 sensor = Adafruit_Si7021();
@@ -84,12 +90,16 @@ void loop() {
   BlynkProvisioning.run();
 
   // Send sensors value to cloud when ready
-  if ((isParametersReceived == 5) && BlynkState::is(MODE_RUNNING)) {
+  if (!isDataSent &&(isParametersReceived == 5) && (BlynkState::is(MODE_RUNNING) || BlynkState::is(MODE_THIRSTY))) {
     send_sensor_value();
     send_alert();
     send_map_value();
+    isDataSent = true;
 
-    if (state > MOISTURE_OK) {
+    if (state == BATTERY_LOW) {
+      BlynkState::set(MODE_BATTERY);
+    }
+    else if (state > MOISTURE_OK) {
       BlynkState::set(MODE_THIRSTY);
     }
     else {
@@ -99,17 +109,28 @@ void loop() {
     } 
   }
 
-  if (BlynkState::is(MODE_THIRSTY)) {
-    delay(10000);
-    sensor_init();
-    sensor_read();
-    send_sensor_value();
+  if (isDataSent && BlynkState::is(MODE_THIRSTY)) {
+    soil_humidity_check();
     send_alert();
-    send_map_value(); 
 
     if (state == MOISTURE_OK) {
       BlynkState::set(MODE_WATER);
       delay(5000);
+      digitalWrite(power, LOW);
+      DEBUG_PRINT("Device in sleep mode");
+      ESP.deepSleep(1 * 1000000);
+    }
+
+    // Put device in sleep mode after 5min without being watered to save battery power
+    if (millis() > 300000) {
+      digitalWrite(power, LOW);
+      DEBUG_PRINT("Device in sleep mode");
+      ESP.deepSleep(sleepTimeS * 1000000);
+    }
+  }
+  if (isDataSent && BlynkState::is(MODE_BATTERY)) { 
+    // Put device in sleep mode after 5min without being watered to save battery power
+    if (millis() > 300000) {
       digitalWrite(power, LOW);
       DEBUG_PRINT("Device in sleep mode");
       ESP.deepSleep(sleepTimeS * 1000000);
@@ -288,7 +309,35 @@ void send_sensor_value() {
   if (sensorBattery > 100) {
     sensorBattery = 100;
   }
+
+  // Battery level
+  if (sensorBattery < 10) {
+    Blynk.setProperty(V9, "color", BLYNK_RED);
+  } else {
+    Blynk.setProperty(V9, "color", BLYNK_GREEN);
+  }
+  
   Blynk.virtualWrite(V9, sensorBattery); 
+}
+
+
+void soil_humidity_check() {
+  DEBUG_PRINT("Check soil humidity");
+  
+  // Soil Moisture
+  digitalWrite(s1, HIGH);
+  digitalWrite(s2, LOW);
+  delay(100);
+  sensorSoilMoisture = 1023 - analogRead(A0);
+  DEBUG_PRINT("Soil Moisture RAW: " + String(sensorSoilMoisture));
+  sensorSoilMoisture = (sensorSoilMoisture + soilMoistureOffset)*soilMoistureGain;
+  DEBUG_PRINT("Soil Moisture: " + String(sensorSoilMoisture));
+   
+  // Unselect sensors
+  digitalWrite(s1, LOW);
+  digitalWrite(s2, LOW);
+
+   delay(1000);
 }
 
 
@@ -297,7 +346,13 @@ void send_map_value() {
   String lonVal = getValue(configStore.plantCoordinate, ',', 1);
   float lat = latVal.toFloat();
   float lon = lonVal.toFloat();
-  myMap.location(mapIndex, lat, lon, String(configStore.plantName) + ": " + alertMessage); 
+
+  if (state == MOISTURE_OK) {
+    alertMessage = OK;
+  }
+
+  DEBUG_PRINT("Send Map value @ " + String(lat) + " and " + String(lon));
+  myMap.location(mapIndex, lat, lon, String(configStore.plantName) + alertMessage); 
 }
 
 
@@ -305,7 +360,8 @@ void send_alert() {
   state = configStore.state;
   counter = configStore.counter;
   DEBUG_PRINT("State: " + String(state) + " & Counter: " + String(counter));
-  
+
+  // Watering alert
   if ((sensorSoilMoisture  < (wateringThreshold - 10)) && (state < URGENT_SENT)) {
     DEBUG_PRINT("URGENT tweet");
     alertMessage = URGENT_WATER;
@@ -318,13 +374,28 @@ void send_alert() {
     state = WATER_SENT; // remember this message
     isNotificationSent = false;
   }
-  else if ((sensorSoilMoisture > (wateringThreshold + HYSTERESIS)) && (state > MOISTURE_OK)) {
+  else if ((sensorSoilMoisture > (wateringThreshold + HYSTERESIS)) && (state > MOISTURE_OK) && (state < BATTERY_LOW)) {
     DEBUG_PRINT("OK tweet");
     alertMessage = THANK_YOU;
     state = MOISTURE_OK; // reset to messages not yet sent state
     isNotificationSent = false;
   }
-
+  else {
+    // Battery alert
+    if ((sensorBattery < 10) && (state == MOISTURE_OK)) {
+      DEBUG_PRINT("BATTERY LOW tweet");
+      alertMessage = BATTERY;
+      state = BATTERY_LOW; // remember this message
+     isNotificationSent = false;
+   }
+    else if ((sensorBattery > 30) && (state == BATTERY_LOW)) {
+      DEBUG_PRINT("BATTERY OK tweet");
+      alertMessage = THANK_BATT;
+      state = MOISTURE_OK; // reset to messages not yet sent state
+      isNotificationSent = false;
+    }
+  }
+  
   if (isNotificationSent == false) {
     Blynk.tweet(String(configStore.plantName) + String(alertMessage) + " [ID-" + String(counter) + "] ");
     Blynk.notify(String(configStore.plantName) + String(alertMessage));
@@ -334,13 +405,6 @@ void send_alert() {
     configStore.state = state;
     configStore.counter = counter;
     config_save();
-  }
-
-  if ((sensorSoilMoisture  < (wateringThreshold - 10)) && (state < URGENT_SENT)) {
-    DEBUG_PRINT("URGENT tweet");
-    alertMessage = URGENT_WATER;
-    state = URGENT_SENT; // remember this message
-    isNotificationSent = false;
   }
 }
 
